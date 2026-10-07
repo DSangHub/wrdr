@@ -1,0 +1,11 @@
+word1 → /api/clarify → question
+word2 → OVERRIDES["word1 word2"] || WORD2_TO_KEY[word2] → key
+key   → ROUTES[key] → 3 buttons
+click → app:// (mobile) or https:// (desktop) → done [ Option 1 ]  free✦ Unlock unlimited
+  $19.95/year · cancel anytime[ Option 2 ]  free
+[ Option 3 ]  free
+[ ✦ Unlock all ]  paid   ← 4th click = revenue click → is user paid?
+          ├─ yes → go to destination
+          └─ no  → clicks used < 10 this month?
+                     ├─ yes → go to destination, increment
+                     └─ no  → show 4th option (unlock)✦ Unlimited — $19.95/yr 
