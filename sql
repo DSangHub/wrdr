@@ -18,3 +18,7 @@ CREATE TABLE click_log (
 );
 
 CREATE INDEX ON click_log (device_id, created_at DESC);
+SELECT fingerprint, COUNT(DISTINCT device_id)
+FROM users
+GROUP BY fingerprint
+HAVING COUNT(DISTINCT device_id) > 3;
