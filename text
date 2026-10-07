@@ -1,6 +1,14 @@
 word1 → /api/clarify → question
-word2 → OVERRIDES["word1 word2"] || WORD2_TO_KEY[word2] → key
-key   → ROUTES[key] → 3 buttons
+word2 → OVERRIDES["word1 word2"] || WORD2_TO_KEY[word2] → keyBrowser                     Your Backend                    Database
+  │                              │                              │
+  │ POST /api/click              │                              │
+  │  {deviceId, word1, word2}───▶│                              │
+  │                              │ atomic: check + increment ──▶│
+  │                              │◀── {allowed, remaining} ─────│
+  │◀── {allowed, remaining} ─────│                              │
+  │                              │                              │
+  │ if allowed → navigate        │                              │
+  │ if denied  → show paywall    │                              │key   → ROUTES[key] → 3 buttons
 click → app:// (mobile) or https:// (desktop) → done [ Option 1 ]  free✦ Unlock unlimited
   $19.95/year · cancel anytime[ Option 2 ]  free
 [ Option 3 ]  free
