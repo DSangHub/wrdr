@@ -14,7 +14,13 @@ export default async function handler(req){
     body: JSON.stringify({
       model:"gpt-4o-mini",
       messages:[
-        {role:"system",content:"Return JSON {question,options[]} to disambiguate a 1-word search. Max 4 options."},
+        {user = {
+  id: "...",
+  plan: "free" | "yearly",
+  clicksUsed: 7,
+  resetAt: "2026-11-01",
+  paidAt: null
+}:"system",content:"Return JSON {question,options[]} to disambiguate a 1-word search. Max 4 options."},
         {role:"user",content:word1}
       ],
       response_format:{type:"json_object"}
