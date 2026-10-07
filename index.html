@@ -394,3 +394,339 @@ start();
 </script>
 </body>
 </html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>wrdr — you are a person of few words</title>
+<style>
+  :root{--bg:#0a0a0a;--fg:#f5f5f5;--dim:#666;--line:#222;--accent:#fff;--gold:#ffd166}
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  body{
+    background:var(--bg);color:var(--fg);
+    font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    min-height:100vh;min-height:100dvh;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;padding:24px;
+    padding-bottom:calc(24px + env(safe-area-inset-bottom));
+  }
+  .wrap{width:100%;max-width:480px}
+  .logo{font-size:28px;font-weight:700;letter-spacing:-.5px;margin-bottom:4px}
+  .tag{color:var(--dim);font-size:13px;margin-bottom:12px}
+  .meter{color:var(--dim);font-size:12px;margin-bottom:28px}
+  .meter b{color:var(--fg);font-weight:500}
+  .stage{min-height:180px;display:flex;flex-direction:column;gap:16px}
+  .q{font-size:20px;font-weight:500;margin-bottom:4px}
+  input{
+    width:100%;background:transparent;border:none;border-bottom:1px solid var(--line);
+    color:var(--fg);font-size:24px;padding:12px 0;outline:none;
+  }
+  input::placeholder{color:var(--dim)}
+  input:focus{border-color:var(--accent)}
+  .options{display:flex;flex-direction:column;gap:10px;margin-top:8px}
+  button.opt{
+    text-align:left;background:transparent;border:1px solid var(--line);
+    color:var(--fg);padding:16px;border-radius:10px;font-size:16px;
+    cursor:pointer;transition:all .12s;
+  }
+  button.opt:hover,button.opt:active{border-color:var(--accent);background:#111;transform:translateX(2px)}
+  button.paid{
+    border-color:var(--gold);color:var(--gold);
+    display:flex;justify-content:space-between;align-items:center;
+  }
+  button.paid:hover,button.paid:active{border-color:var(--gold);background:#1a1508}
+  button.paid small{opacity:.7;font-size:12px}
+  .hint{color:var(--dim);font-size:12px;margin-top:12px}
+  .back{color:var(--dim);font-size:12px;cursor:pointer;margin-top:16px;display:inline-block}
+  .back:hover{color:var(--fg)}
+  .fade{animation:f .2s ease}
+  .loading{color:var(--dim);font-size:12px}
+  @keyframes f{from{opacity:0;transform:translateY(4px)}to{opacity:1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="logo">wrdr</div>
+  <div class="tag">few words. fast answers.</div>
+  <div class="meter" id="meter"></div>
+  <div class="stage" id="stage"></div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+const FREE_LIMIT = 10;              // clicks per month
+const PRICE_YEAR  = "$19.95/year";  // unlimited plan
+const MONTH_MS    = 30 * 24 * 60 * 60 * 1000;
+
+// ============================================================
+// ROUTE TABLE
+// ============================================================
+const ROUTES = {
+  job: [
+    {label:"Find a job",         url:"https://www.indeed.com",            app:"indeed://"},
+    {label:"Write a resume",     url:"https://www.resumemaker.online",     app:null},
+    {label:"Prep for interview", url:"https://www.glassdoor.com/Interview", app:"glassdoor://"}
+  ],
+  pain: [
+    {label:"Physical pain",      url:"https://www.webmd.com/pain-management", app:null},
+    {label:"Emotional pain",     url:"https://www.psychologytoday.com",       app:null},
+    {label:"Find a doctor",      url:"https://www.zocdoc.com",                app:"zocdoc://"}
+  ],
+  cash: [
+    {label:"Send money",         url:"https://cash.app",              app:"cashme://"},
+    {label:"Borrow money",       url:"https://www.lendingtree.com",   app:null},
+    {label:"Earn money",         url:"https://www.upwork.com",        app:"upwork://"}
+  ]
+};
+
+const OVERRIDES = {
+  "find job":"job", "quit job":"job",
+  "back pain":"pain", "heart pain":"pain",
+  "send cash":"cash", "need cash":"cash", "borrow cash":"cash"
+};
+
+const WORD2_TO_KEY = {
+  job:"job", work:"job", career:"job",
+  pain:"pain", ache:"pain", hurt:"pain",
+  cash:"cash", money:"cash", pay:"cash", funds:"cash"
+};
+
+// 4th option = affiliate/sponsor (rotates per key)
+const SPONSOR = {
+  job:  {label:"✦ Resume AI — free scan", url:"https://example.com/resume-ai"},
+  pain: {label:"✦ Televisit — $0 consult", url:"https://example.com/televisit"},
+  cash: {label:"✦ Earn $50 signup",        url:"https://example.com/referral"}
+};
+
+// ============================================================
+// USER STATE (localStorage; server-side in prod)
+// ============================================================
+const KEY = "wrdr_user";
+
+function loadUser(){
+  try{
+    const u = JSON.parse(localStorage.getItem(KEY));
+    if(u) return u;
+  }catch(e){}
+  return { plan:"free", clicksUsed:0, resetAt: Date.now() + MONTH_MS, paidAt:null };
+}
+function saveUser(u){ localStorage.setItem(KEY, JSON.stringify(u)); }
+
+let user = loadUser();
+
+function rolloverIfNeeded(){
+  if(user.plan === "yearly") return;
+  if(Date.now() > user.resetAt){
+    user.clicksUsed = 0;
+    user.resetAt = Date.now() + MONTH_MS;
+    saveUser(user);
+  }
+}
+
+function remaining(){
+  if(user.plan === "yearly") return Infinity;
+  return Math.max(0, FREE_LIMIT - user.clicksUsed);
+}
+
+function updateMeter(){
+  const m = document.getElementById('meter');
+  if(user.plan === "yearly"){
+    m.innerHTML = `<b>Unlimited</b> · yearly`;
+  }else{
+    m.innerHTML = `<b>${remaining()}</b> of ${FREE_LIMIT} free this month`;
+  }
+}
+
+// ============================================================
+// AI CLARIFY (same as before)
+// ============================================================
+const AI_ENDPOINT = null;
+
+async function clarify(word1, history){
+  if(AI_ENDPOINT){
+    try{
+      const res = await fetch(AI_ENDPOINT,{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ word1, history })
+      });
+      if(res.ok) return await res.json();
+    }catch(e){}
+  }
+  return { question:"What kind?", options:["job","pain","cash","other"] };
+}
+
+// ============================================================
+// DEEP LINK
+// ============================================================
+function openDestination(opt){
+  if(opt.app && /iPhone|iPad|Android/i.test(navigator.userAgent)){
+    const t = Date.now();
+    const timer = setTimeout(()=>{
+      if(Date.now() - t < 1200 && !document.hidden){
+        window.location.href = opt.url;
+      }
+    }, 600);
+    document.addEventListener("visibilitychange", ()=>{
+      if(document.hidden) clearTimeout(timer);
+    }, {once:true});
+    window.location.href = opt.app;
+  }else{
+    window.location.href = opt.url;
+  }
+}
+
+// ============================================================
+// RENDER
+// ============================================================
+const stage = document.getElementById('stage');
+function render(html){ stage.innerHTML = html; stage.className='stage fade'; updateMeter(); }
+
+function showInput({question, placeholder, onEnter, loading}){
+  render(`
+    <div class="q">${question}</div>
+    <input id="inp" autofocus placeholder="${placeholder}" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div class="hint">${loading ? '<span class="loading">thinking…</span>' : 'press enter'}</div>
+  `);
+  const inp = document.getElementById('inp');
+  inp.addEventListener('keydown', e=>{
+    if(e.key==='Enter' && inp.value.trim()){
+      onEnter(inp.value.trim().toLowerCase());
+    }
+  });
+}
+
+// ============================================================
+// FLOW
+// ============================================================
+let state = { word1:null, word2:null, key:null };
+
+function start(){
+  rolloverIfNeeded();
+  state = { word1:null, word2:null, key:null };
+  showInput({
+    question:"What do you need?",
+    placeholder:"one word",
+    onEnter: word1 => { state.word1 = word1; askSecond(); }
+  });
+}
+
+async function askSecond(){
+  render(`<div class="q">…</div><div class="hint"><span class="loading">thinking</span></div>`);
+  const { question } = await clarify(state.word1, [state.word1]);
+  showInput({
+    question,
+    placeholder:"one word",
+    onEnter: word2 => { state.word2 = word2; route(); }
+  });
+}
+
+function route(){
+  const combo = `${state.word1} ${state.word2}`;
+  const key = OVERRIDES[combo] || WORD2_TO_KEY[state.word2] || state.word2;
+  state.key = key;
+  ROUTES[key] ? showOptions(key) : noMatch();
+}
+
+function noMatch(){
+  render(`
+    <div class="q">No match for "${state.word2}".</div>
+    <div class="options">
+      <button class="opt" id="retry">Try again</button>
+    </div>
+    <span class="back" onclick="start()">← restart</span>
+  `);
+  document.getElementById('retry').addEventListener('click', start);
+}
+
+function showOptions(key){
+  const opts = ROUTES[key];
+  const out  = remaining();
+
+  // 3 free + 1 monetized slot (sponsor if under limit, unlock if over)
+  let fourth;
+  if(user.plan === "yearly"){
+    fourth = null; // paid users see a clean 3
+  }else if(out > 0){
+    const s = SPONSOR[key] || {label:"✦ Sponsored", url:"https://example.com"};
+    fourth = `<button class="opt paid" data-kind="sponsor" data-url="${s.url}">
+                ${s.label}<small>free</small>
+              </button>`;
+  }else{
+    fourth = `<button class="opt paid" data-kind="unlock">
+                ✦ Unlock unlimited<small>${PRICE_YEAR}</small>
+              </button>`;
+  }
+
+  render(`
+    <div class="q">Pick one:</div>
+    <div class="options">
+      ${opts.map((o,i)=>`<button class="opt" data-i="${i}">${o.label}</button>`).join('')}
+      ${fourth || ''}
+    </div>
+    <span class="back" onclick="start()">← restart</span>
+  `);
+
+  stage.querySelectorAll('button.opt').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      const kind = btn.dataset.kind;
+      if(kind === "unlock"){ showUnlock(); return; }
+      if(kind === "sponsor"){
+        consumeClick();
+        window.location.href = btn.dataset.url;
+        return;
+      }
+      // standard destination
+      if(remaining() <= 0){ showUnlock(); return; }
+      consumeClick();
+      openDestination(opts[+btn.dataset.i]);
+    });
+  });
+}
+
+function consumeClick(){
+  if(user.plan === "yearly") return;
+  user.clicksUsed++;
+  saveUser(user);
+}
+
+// ============================================================
+// PAYWALL / UNLOCK
+// ============================================================
+function showUnlock(){
+  render(`
+    <div class="q">You've used your 10 free this month.</div>
+    <div class="options">
+      <button class="opt paid" id="buy">
+        ✦ Unlimited — ${PRICE_YEAR}<small>one click</small>
+      </button>
+      <button class="opt" id="wait">Wait until next month</button>
+    </div>
+    <span class="back" onclick="start()">← restart</span>
+  `);
+  document.getElementById('buy').addEventListener('click', purchase);
+  document.getElementById('wait').addEventListener('click', start);
+}
+
+async function purchase(){
+  // In prod: redirect to Stripe Checkout, then verify on return.
+  // Prototype: mark yearly locally.
+  user.plan = "yearly";
+  user.paidAt = Date.now();
+  saveUser(user);
+  render(`
+    <div class="q">Unlocked. Unlimited.</div>
+    <div class="options">
+      <button class="opt" id="go">Start searching</button>
+    </div>
+  `);
+  document.getElementById('go').addEventListener('click', start);
+}
+
+// boot
+start();
+</script>
+</body>
+</html>
