@@ -22,6 +22,10 @@
   .promise{font-size:18px;color:var(--fg);margin-bottom:32px}
   .submit{background:var(--fg);color:var(--bg);border:0;border-radius:10px;padding:14px 20px;font:inherit;cursor:pointer;margin-top:16px}
   button:focus-visible{outline:2px solid var(--accent);outline-offset:4px}
+  .suggestions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+  .suggestion{max-width:100%;background:#151515;border:1px solid #333;border-radius:999px;color:var(--fg);padding:10px 14px;font:inherit;font-size:14px;text-align:left;cursor:pointer;overflow-wrap:anywhere}
+  .suggestion:hover{background:#222;border-color:#aaa}
+  .suggestion-label{color:#aaa;font-size:13px;margin-top:24px}
   .meter{color:var(--dim);font-size:12px;margin-bottom:28px}
   .meter b{color:var(--fg);font-weight:500}
   .stage{min-height:180px;display:flex;flex-direction:column;gap:16px}
@@ -67,6 +71,11 @@
 // ============================================================
 // CONFIG
 // ============================================================
+const SEARCH_SUGGESTIONS = [
+  "Medicine", "food", "check price", "city name", "Movies near me",
+  "Store hours", "traffic updates", "road closures", "credit limit increase",
+  "Taco Bell specials", "a meal for $10", "beauty salon near me", "best Gas price"
+];
 const FREE_LIMIT = 10;              // clicks per month
 const PRICE_YEAR  = "$19.95/year";  // unlimited plan
 const MONTH_MS    = 30 * 24 * 60 * 60 * 1000;
@@ -190,7 +199,7 @@ function render(html){ stage.innerHTML = html; stage.className='stage fade'; upd
 
 function escapeHTML(value){ return String(value).replace(/[&<>"\']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","\'":"&#39;"}[char])); }
 
-function showInput({question, placeholder, onEnter, loading}){
+function showInput({question, placeholder, onEnter, loading, suggestions = false}){
   render(`
     <form id="search-form">
     <label class="q" for="inp">${escapeHTML(question)}</label>
@@ -198,8 +207,19 @@ function showInput({question, placeholder, onEnter, loading}){
     <button class="submit" type="submit">Continue</button>
     <div class="hint">one word at a time · tap Continue or press Enter</div>
     </form>
+    ${suggestions ? `<p class="suggestion-label">Try a search — tap to fill the search bar</p>
+    <div class="suggestions" role="group" aria-label="Search suggestions">
+      ${SEARCH_SUGGESTIONS.map((phrase, index) => `<button class="suggestion" type="button" data-suggestion="${index}">${escapeHTML(phrase)}</button>`).join('')}
+    </div>` : ''}
   `);
   const inp = document.getElementById('inp');
+  stage.querySelectorAll('[data-suggestion]').forEach(button=>{
+    button.addEventListener('click', ()=>{
+      inp.value = SEARCH_SUGGESTIONS[Number(button.dataset.suggestion)];
+      inp.focus();
+      inp.setSelectionRange(inp.value.length, inp.value.length);
+    });
+  });
   document.getElementById('search-form').addEventListener('submit', e=>{
     e.preventDefault();
     if(inp.value.trim()) onEnter(inp.value.trim().toLowerCase());
@@ -216,7 +236,8 @@ function start(){
   state = { word1:null, word2:null, key:null };
   showInput({
     question:"What do you need?",
-    placeholder:"one word",
+    placeholder:"words to search",
+    suggestions:true,
     onEnter: word1 => { state.word1 = word1; askSecond(); }
   });
 }
