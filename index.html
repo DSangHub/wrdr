@@ -26,6 +26,9 @@
   .suggestion{max-width:100%;background:#151515;border:1px solid #333;border-radius:999px;color:var(--fg);padding:10px 14px;font:inherit;font-size:14px;text-align:left;cursor:pointer;overflow-wrap:anywhere}
   .suggestion:hover{background:#222;border-color:#aaa}
   .suggestion-label{color:#aaa;font-size:13px;margin-top:24px}
+  .answer{white-space:pre-wrap;line-height:1.6;overflow-wrap:anywhere}
+  #sources{display:flex;flex-direction:column;gap:10px;overflow-wrap:anywhere}
+  #sources a{color:#bcd6ff}
   .meter{color:var(--dim);font-size:12px;margin-bottom:28px}
   .meter b{color:var(--fg);font-weight:500}
   .stage{min-height:180px;display:flex;flex-direction:column;gap:16px}
@@ -68,278 +71,72 @@
 </main>
 
 <script>
-// ============================================================
-// CONFIG
-// ============================================================
-const SEARCH_SUGGESTIONS = [
-  "Medicine", "food", "check price", "city name", "Movies near me",
-  "Store hours", "traffic updates", "road closures", "credit limit increase",
-  "Taco Bell specials", "a meal for $10", "beauty salon near me", "best Gas price"
-];
-const FREE_LIMIT = 10;              // clicks per month
-const PRICE_YEAR  = "$19.95/year";  // unlimited plan
-const MONTH_MS    = 30 * 24 * 60 * 60 * 1000;
-
-// ============================================================
-// ROUTE TABLE
-// ============================================================
-const ROUTES = {
-  job: [
-    {label:"Find a job",         url:"https://www.indeed.com",            app:"indeed://"},
-    {label:"Write a resume",     url:"https://www.resumemaker.online",     app:null},
-    {label:"Prep for interview", url:"https://www.glassdoor.com/Interview", app:"glassdoor://"}
-  ],
-  pain: [
-    {label:"Physical pain",      url:"https://www.webmd.com/pain-management", app:null},
-    {label:"Emotional pain",     url:"https://www.psychologytoday.com",       app:null},
-    {label:"Find a doctor",      url:"https://www.zocdoc.com",                app:"zocdoc://"}
-  ],
-  cash: [
-    {label:"Send money",         url:"https://cash.app",              app:"cashme://"},
-    {label:"Borrow money",       url:"https://www.lendingtree.com",   app:null},
-    {label:"Earn money",         url:"https://www.upwork.com",        app:"upwork://"}
-  ]
-};
-
-const OVERRIDES = {
-  "find job":"job", "quit job":"job",
-  "back pain":"pain", "heart pain":"pain",
-  "send cash":"cash", "need cash":"cash", "borrow cash":"cash"
-};
-
-const WORD2_TO_KEY = {
-  job:"job", work:"job", career:"job",
-  pain:"pain", ache:"pain", hurt:"pain",
-  cash:"cash", money:"cash", pay:"cash", funds:"cash"
-};
-
-// ============================================================
-// USER STATE (localStorage; server-side in prod)
-// ============================================================
-const KEY = "wrdr_user";
-
-function loadUser(){
-  try{
-    const u = JSON.parse(localStorage.getItem(KEY));
-    if(u) return u;
-  }catch(e){}
-  return { plan:"free", clicksUsed:0, resetAt: Date.now() + MONTH_MS, paidAt:null };
+const SEARCH_SUGGESTIONS = ["Medicine","food","check price","city name","Movies near me","Store hours","traffic updates","road closures","credit limit increase","Taco Bell specials","a meal for $10","beauty salon near me","best Gas price"];
+const stage=document.getElementById('stage');
+let remaining=3;
+let busy=false;
+function escapeHTML(value){return String(value).replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));}
+function meter(){document.getElementById('meter').textContent=remaining+' of 3 free searches remaining';}
+function start(value=''){
+  meter();
+  stage.innerHTML=`<form id="search-form">
+    <label class="q" for="inp">What do you need?</label>
+    <input id="inp" placeholder="words to search" maxlength="300" enterkeyhint="search" required>
+    <button class="submit" type="submit">Find my answer</button>
+    <p class="hint">3 searches free. On your fourth search, buy tokens or choose $19.95/year.</p>
+  </form>
+  <p class="suggestion-label">Try a search — tap to fill the search bar</p>
+  <div class="suggestions" role="group" aria-label="Search suggestions">
+    ${SEARCH_SUGGESTIONS.map((phrase,i)=>`<button class="suggestion" type="button" data-suggestion="${i}">${escapeHTML(phrase)}</button>`).join('')}
+  </div>`;
+  const inp=document.getElementById('inp');inp.value=value;
+  stage.querySelectorAll('[data-suggestion]').forEach(btn=>btn.addEventListener('click',()=>{inp.value=SEARCH_SUGGESTIONS[Number(btn.dataset.suggestion)];inp.focus();inp.setSelectionRange(inp.value.length,inp.value.length);}));
+  document.getElementById('search-form').addEventListener('submit',event=>{event.preventDefault();search(inp.value.trim());});
 }
-function saveUser(u){ try{ localStorage.setItem(KEY, JSON.stringify(u)); }catch(e){} }
-
-let user = loadUser();
-
-function rolloverIfNeeded(){
-  if(user.plan === "yearly") return;
-  if(Date.now() > user.resetAt){
-    user.clicksUsed = 0;
-    user.resetAt = Date.now() + MONTH_MS;
-    saveUser(user);
-  }
-}
-
-function remaining(){
-  if(user.plan === "yearly") return Infinity;
-  return Math.max(0, FREE_LIMIT - user.clicksUsed);
-}
-
-function updateMeter(){
-  const m = document.getElementById('meter');
-  if(user.plan === "yearly"){
-    m.innerHTML = `<b>Unlimited</b> · yearly`;
-  }else{
-    m.innerHTML = `<b>${remaining()}</b> of ${FREE_LIMIT} free this month`;
-  }
-}
-
-// ============================================================
-// AI CLARIFY (same as before)
-// ============================================================
-const AI_ENDPOINT = null;
-
-async function clarify(word1, history){
-  if(AI_ENDPOINT){
-    try{
-      const res = await fetch(AI_ENDPOINT,{
-        method:"POST",
-        headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ word1, history })
-      });
-      if(res.ok) return await res.json();
-    }catch(e){}
-  }
-  return { question:"What kind?", options:["job","pain","cash","other"] };
-}
-
-// ============================================================
-// DEEP LINK
-// ============================================================
-function openDestination(opt){
-  if(opt.app && /iPhone|iPad|Android/i.test(navigator.userAgent)){
-    const t = Date.now();
-    const timer = setTimeout(()=>{
-      if(Date.now() - t < 1200 && !document.hidden){
-        window.location.href = opt.url;
-      }
-    }, 600);
-    document.addEventListener("visibilitychange", ()=>{
-      if(document.hidden) clearTimeout(timer);
-    }, {once:true});
-    window.location.href = opt.app;
-  }else{
-    window.location.href = opt.url;
-  }
-}
-
-// ============================================================
-// RENDER
-// ============================================================
-const stage = document.getElementById('stage');
-function render(html){ stage.innerHTML = html; stage.className='stage fade'; updateMeter(); }
-
-function escapeHTML(value){ return String(value).replace(/[&<>"\']/g, char => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","\'":"&#39;"}[char])); }
-
-function showInput({question, placeholder, onEnter, loading, suggestions = false}){
-  render(`
-    <form id="search-form">
-    <label class="q" for="inp">${escapeHTML(question)}</label>
-    <input id="inp" placeholder="${escapeHTML(placeholder)}" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="go" required>
-    <button class="submit" type="submit">Continue</button>
-    <div class="hint">one word at a time · tap Continue or press Enter</div>
-    </form>
-    ${suggestions ? `<p class="suggestion-label">Try a search — tap to fill the search bar</p>
-    <div class="suggestions" role="group" aria-label="Search suggestions">
-      ${SEARCH_SUGGESTIONS.map((phrase, index) => `<button class="suggestion" type="button" data-suggestion="${index}">${escapeHTML(phrase)}</button>`).join('')}
-    </div>` : ''}
-  `);
-  const inp = document.getElementById('inp');
-  stage.querySelectorAll('[data-suggestion]').forEach(button=>{
-    button.addEventListener('click', ()=>{
-      inp.value = SEARCH_SUGGESTIONS[Number(button.dataset.suggestion)];
-      inp.focus();
-      inp.setSelectionRange(inp.value.length, inp.value.length);
-    });
-  });
-  document.getElementById('search-form').addEventListener('submit', e=>{
-    e.preventDefault();
-    if(inp.value.trim()) onEnter(inp.value.trim().toLowerCase());
-  });
-}
-
-// ============================================================
-// FLOW
-// ============================================================
-let state = { word1:null, word2:null, key:null };
-
-function start(){
-  rolloverIfNeeded();
-  state = { word1:null, word2:null, key:null };
-  showInput({
-    question:"What do you need?",
-    placeholder:"words to search",
-    suggestions:true,
-    onEnter: word1 => { state.word1 = word1; askSecond(); }
-  });
-}
-
-async function askSecond(){
-  render(`<div class="q">…</div><div class="hint"><span class="loading">thinking</span></div>`);
-  const { question } = await clarify(state.word1, [state.word1]);
-  showInput({
-    question,
-    placeholder:"one word",
-    onEnter: word2 => { state.word2 = word2; route(); }
-  });
-}
-
-function route(){
-  const combo = `${state.word1} ${state.word2}`;
-  const key = OVERRIDES[combo] || WORD2_TO_KEY[state.word2] || state.word2;
-  state.key = key;
-  ROUTES[key] ? showOptions(key) : noMatch();
-}
-
-function noMatch(){
-  render(`
-    <div class="q">No match for "${escapeHTML(state.word2)}".</div>
-    <div class="options">
-      <button class="opt" id="retry">Try again</button>
-    </div>
-    <span class="back" onclick="start()">← restart</span>
-  `);
-  document.getElementById('retry').addEventListener('click', start);
-}
-
-function showOptions(key){
-  const opts = ROUTES[key];
-  const out  = remaining();
-
-  const fourth = user.plan !== "yearly" && out <= 0
-    ? `<button class="opt paid" data-kind="unlock">✦ Unlock unlimited<small>${PRICE_YEAR}</small></button>`
-    : "";
-  render(`
-    <div class="q">Pick one:</div>
-    <div class="options">
-      ${opts.map((o,i)=>`<button class="opt" data-i="${i}">${o.label}</button>`).join('')}
-      ${fourth || ''}
-    </div>
-    <span class="back" onclick="start()">← restart</span>
-  `);
-
-  stage.querySelectorAll('button.opt').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      const kind = btn.dataset.kind;
-      if(kind === "unlock"){ showUnlock(); return; }
-
-      // standard destination
-      if(remaining() <= 0){ showUnlock(); return; }
-      consumeClick();
-      openDestination(opts[+btn.dataset.i]);
-    });
-  });
-}
-
-function consumeClick(){
-  if(user.plan === "yearly") return;
-  user.clicksUsed++;
-  saveUser(user);
-}
-
-// ============================================================
-// PAYWALL / UNLOCK
-// ============================================================
 function showUnlock(){
-  render(`
-    <div class="q">You've used your 10 free this month.</div>
+  meter();
+  stage.innerHTML=`<div class="q">Your 3 free searches are used.</div>
+    <p>Keep finding answers with tokens or a yearly plan.</p>
     <div class="options">
-      <button class="opt paid" id="buy">
-        ✦ Unlimited — ${PRICE_YEAR}<small>one click</small>
-      </button>
-      <button class="opt" id="wait">Wait until next month</button>
+      <button class="opt paid" data-plan="tokens5">Buy tokens — $5</button>
+      <button class="opt paid" data-plan="tokens10">Buy tokens — $10</button>
+      <button class="opt paid" data-plan="yearly">Yearly plan — $19.95/year</button>
     </div>
-    <span class="back" onclick="start()">← restart</span>
-  `);
-  document.getElementById('buy').addEventListener('click', purchase);
-  document.getElementById('wait').addEventListener('click', start);
+    <p class="hint" id="payment-status" role="status">Purchases are coming soon.</p>
+    <button class="opt" id="back">Back to search</button>`;
+  stage.querySelectorAll('[data-plan]').forEach(btn=>btn.addEventListener('click',()=>{document.getElementById('payment-status').textContent='Checkout is not available yet. Please try again later.';}));
+  document.getElementById('back').addEventListener('click',()=>start());
 }
-
-async function purchase(){
-  // In prod: redirect to Stripe Checkout, then verify on return.
-  // Prototype: mark yearly locally.
-  user.plan = "yearly";
-  user.paidAt = Date.now();
-  saveUser(user);
-  render(`
-    <div class="q">Unlocked. Unlimited.</div>
-    <div class="options">
-      <button class="opt" id="go">Start searching</button>
-    </div>
-  `);
-  document.getElementById('go').addEventListener('click', start);
+async function search(query){
+  if(busy || !query)return;
+  if(remaining<=0){showUnlock();return;}
+  busy=true;
+  stage.innerHTML='<p class="q" role="status">Finding your answer…</p>';
+  try{
+    const response=await fetch('/api/answer',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query})});
+    const data=await response.json();
+    if(response.status===402){remaining=0;showUnlock();return;}
+    if(!response.ok)throw new Error(data.error || 'Search unavailable.');
+    remaining=data.remaining;meter();
+    const sources=(data.sources || []).filter(source=>/^https?:\/\//.test(source.url));
+    stage.innerHTML=`<p class="q">${escapeHTML(query)}</p><div class="answer" id="answer"></div>
+      ${sources.length?'<p class="hint">Sources</p><div id="sources"></div>':''}
+      <button class="opt" id="again">Search again</button>`;
+    document.getElementById('answer').textContent=data.answer;
+    const links=document.getElementById('sources');
+    sources.forEach(source=>{const link=document.createElement('a');link.href=source.url;link.textContent=source.title;link.target='_blank';link.rel='noopener noreferrer';links.appendChild(link);});
+    document.getElementById('again').addEventListener('click',()=>start());
+  }catch(error){
+    stage.innerHTML='<p class="q" id="error" role="alert"></p><button class="opt" id="retry">Try again</button>';
+    document.getElementById('error').textContent=error.message;
+    document.getElementById('retry').addEventListener('click',()=>start(query));
+  }finally{busy=false;}
 }
-
-// boot
-start();
+async function boot(){
+  start();
+  try{const response=await fetch('/api/answer');if(response.ok){const data=await response.json();remaining=data.remaining;meter();}}catch{}
+}
+boot();
 </script>
 </body>
 </html>
